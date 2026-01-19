@@ -7,15 +7,27 @@ pipeline {
         stage('Get Code') {
             steps {
                 git 'https://github.com/Soratadev/helloworld-unir'
-                echo "Workspace actual: ${env.WORKSPACE}"
-                sh 'dir'
+                sh '''
+                    whoami
+                    hostname
+                    echo "$WORKSPACE"
+                '''
                 stash name:'code', includes:'**'
-                
+                cleanWs()
             }
         }
-        stage('Build') {
+        stage('Static') {
+            agent {label 'ubuntu'}
             steps {
-                echo '¡Python es un lenguaje interpretado, so nutria!'
+                unstash name:'code'
+                sh '''
+                    python3 -m flake8 --exit-zero --format=pylint app >flake8.out
+                    whoami
+                    hostname
+                    echo "$WORKSPACE"
+                '''
+                recordIssues tools: [flake8(name: 'Flake8', pattern: 'flake8.out')], qualityGates: [[threshold: 10, type: 'TOTAL', unstable: true], [threshold: 11, type: 'TOTAL', unstable: false]]
+                cleanWs()
             }
         }
         stage('Tests') {
@@ -29,6 +41,9 @@ pipeline {
                                 ls -la
                                 export PYTHONPATH=$WORKSPACE
                                 pytest --junitxml=result-unit.xml test/unit
+                                whoami
+                                hostname
+                                echo "$WORKSPACE"
                             '''
                             stash name:'unit-res', includes:'result-unit.xml'
                             cleanWs()
@@ -43,11 +58,14 @@ pipeline {
                             sh '''
                                 export FLASK_APP=app/api.py
                                 nohup flask run &
-                                sleep 3
+                                sleep 5
                                 nohup java -jar /home/soratadev/jenkins-ssh/wiremock-standalone-3.13.2.jar --port 9090 --root-dir test/wiremock &
-                                sleep 2
+                                sleep 5
                                 export PYTHONPATH=$WORKSPACE
                                 pytest --junitxml=result-rest.xml test/rest
+                                whoami
+                                hostname
+                                echo "$WORKSPACE"
                             '''
                             stash name:'rest-res', includes:'result-rest.xml'
                             cleanWs()
@@ -56,12 +74,53 @@ pipeline {
                 }
             }
         }
-        stage ('Results') {
-            agent {label 'jenkins'}
+        stage('Cobertura') {
+            agent {label 'agent1'}
             steps {
-                unstash name:'unit-res'
-                unstash name:'rest-res'
-                junit 'result*.xml'
+                unstash name:'code'
+                sh '''
+                    export PYTHONPATH=$WORKSPACE
+                    python3 -m coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest test/unit
+                    python3 -m coverage xml -o coverage.xml
+                    whoami
+                    hostname
+                    echo "$WORKSPACE"
+                '''
+                recordCoverage qualityGates: [[critically: 'ERROR', integerThreshold: 85, metric: 'LINE', threshold: 85.0], [integerThreshold: 95, metric: 'LINE', threshold: 95.0], [critically: 'ERROR', integerThreshold: 80, metric: 'BRANCH', threshold: 80.0], [integerThreshold: 90, metric: 'BRANCH', threshold: 90.0]], tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']]
+                cleanWs()
+            }
+        }
+        stage('Security') {
+            agent {label 'ubuntu'}
+            steps {
+                unstash name:'code'
+                sh '''
+                    python3 -m bandit -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}" || true
+                    whoami
+                    hostname
+                    echo "$WORKSPACE"
+                '''
+                recordIssues tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')], qualityGates: [[threshold: 1, type: 'TOTAL', unstable: true], [threshold: 2, type: 'TOTAL', unstable: false]]
+                cleanWs()
+            }
+        }
+        stage('Performance') {
+            agent {label 'agent1'}
+            steps {
+                unstash name:'code'
+                sh '''
+                    export FLASK_APP=app/api.py
+                    nohup flask run --host=0.0.0.0 --port=5000 &
+                    sleep 5
+                    JMETER="$HOME/apache-jmeter-5.6.3/bin/jmeter"
+                    JTL_FILE="$WORKSPACE/flask_$(date +%s).jtl"
+                    "$JMETER" -n -t "$WORKSPACE/test/jmeter/flask.jmx" -f -l "$JTL_FILE"
+                    whoami
+                    hostname
+                    echo "$WORKSPACE"
+                '''
+                perfReport sourceDataFiles: 'flask.jtl'
+                cleanWs()
             }
         }
     }
