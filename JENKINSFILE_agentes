@@ -45,6 +45,7 @@ pipeline {
                                 hostname
                                 echo "$WORKSPACE"
                             '''
+                            junit 'result*.xml'
                             stash name:'unit-res', includes:'result-unit.xml'
                             cleanWs()
                         }
@@ -67,6 +68,7 @@ pipeline {
                                 hostname
                                 echo "$WORKSPACE"
                             '''
+                            junit 'result*.xml'
                             stash name:'rest-res', includes:'result-rest.xml'
                             cleanWs()
                         }
@@ -74,34 +76,38 @@ pipeline {
                 }
             }
         }
-        stage('Cobertura') {
-            agent {label 'agent1'}
-            steps {
-                unstash name:'code'
-                sh '''
-                    export PYTHONPATH=$WORKSPACE
-                    python3 -m coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest test/unit
-                    python3 -m coverage xml -o coverage.xml
-                    whoami
-                    hostname
-                    echo "$WORKSPACE"
-                '''
-                recordCoverage qualityGates: [[critically: 'ERROR', integerThreshold: 85, metric: 'LINE', threshold: 85.0], [integerThreshold: 95, metric: 'LINE', threshold: 95.0], [critically: 'ERROR', integerThreshold: 80, metric: 'BRANCH', threshold: 80.0], [integerThreshold: 90, metric: 'BRANCH', threshold: 90.0]], tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']]
-                cleanWs()
-            }
-        }
-        stage('Security') {
-            agent {label 'ubuntu'}
-            steps {
-                unstash name:'code'
-                sh '''
-                    python3 -m bandit -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}" || true
-                    whoami
-                    hostname
-                    echo "$WORKSPACE"
-                '''
-                recordIssues tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')], qualityGates: [[threshold: 1, type: 'TOTAL', unstable: true], [threshold: 2, type: 'TOTAL', unstable: false]]
-                cleanWs()
+        stage('Coverture+Security') {
+            parallel {
+                stage('Cobertura') {
+                agent {label 'agent1'}
+                    steps {
+                        unstash name:'code'
+                        sh '''
+                            export PYTHONPATH=$WORKSPACE
+                            python3 -m coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest test/unit
+                            python3 -m coverage xml -o coverage.xml
+                            whoami
+                            hostname
+                            echo "$WORKSPACE"
+                        '''
+                        recordCoverage qualityGates: [[critically: 'ERROR', integerThreshold: 85, metric: 'LINE', threshold: 85.0], [integerThreshold: 95, metric: 'LINE', threshold: 95.0], [critically: 'ERROR', integerThreshold: 80, metric: 'BRANCH', threshold: 80.0], [integerThreshold: 90, metric: 'BRANCH', threshold: 90.0]], tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']]
+                        cleanWs()
+                    }
+                }
+                stage('Security') {
+                    agent {label 'ubuntu'}
+                    steps {
+                        unstash name:'code'
+                        sh '''
+                            python3 -m bandit -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}" || true
+                            whoami
+                            hostname
+                            echo "$WORKSPACE"
+                        '''
+                        recordIssues tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')], qualityGates: [[threshold: 1, type: 'TOTAL', unstable: true], [threshold: 2, type: 'TOTAL', unstable: false]]
+                        cleanWs()
+                    }
+                }
             }
         }
         stage('Performance') {
