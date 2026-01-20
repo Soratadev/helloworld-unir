@@ -119,13 +119,13 @@ pipeline {
                     nohup flask run --host=0.0.0.0 --port=5000 &
                     sleep 5
                     JMETER="$HOME/apache-jmeter-5.6.3/bin/jmeter"
-                    JTL_FILE="$WORKSPACE/flask_$(date +%s).jtl"
+                    JTL_FILE="$WORKSPACE/flask.jtl"
                     "$JMETER" -n -t "$WORKSPACE/test/jmeter/flask.jmx" -f -l "$JTL_FILE"
                     whoami
                     hostname
                     echo "$WORKSPACE"
                 '''
-                perfReport sourceDataFiles: 'flask.jtl'
+                perfReport sourceDataFiles: "$JTL_FILE"
                 cleanWs()
             }
         }
